@@ -1,0 +1,358 @@
+first model checked: university
+observations: in that what I see is that the name field has a uses two class based validators named
+              1. ValidateData
+			  2. MaxLengthValidator
+			  Now what i find common in both these classes is the decorator @deconstructible
+			  (which you need to import i.e  from django.utils.deconstruct import deconstructible)
+			  What I also need to remember that since these are validators they would be expected to raise
+			  a validation error so we need another import i.e django.core.exceptions import ValidationError
+			  
+			  Okay, but why do we need the @deconstructible for anyway?
+			  ans: these custom validator classes that we use in the models
+			  especially in the validator model field option, then we need this.
+			  But why?
+			  ans: because when we migrate the models we serialize them into a file.
+			  but the validator classes that we have used wont get serialized into that file.
+			  so to serialize them we need to add this decorator.
+			  
+			  But if I put it what would happen?
+			  ans: If we dont put the decorator, then we need to add the deconstruct()
+			  method which takes no arguments and returns a tuple of three things (path, args, kwargs)
+			  But if we do use this decorator, this method gets added itself. 
+			  
+			  But you also need to add the __eq__(self, others) method to prevent a new migration 
+			  from being created each time the makemigration is run. 
+			  
+			  check the custom decontruct method, migrations, validations part of django docs.
+			  
+              writing a class based validator is a bit different from what I observe in these two classes,
+			  both have an 
+			  __init__(self, someparams)
+			  __call__(self, value)
+			  __eq__(self,other)
+			  __ne__(self,other)
+              
+              now if I look at class ValidateData,
+              they have used __init__():-to initialize the instance
+              but they have used the __call__():- it is called when the instance is called.
+              eg:
+              v = ValidateData() __init__() is called.
+              v() __call__() is called.
+              Note:-this is as per what is given in stackoverflow link
+			  http://stackoverflow.com/questions/9663562/what-is-difference-between-init-and-call-in-python
+			  
+			  For now I am going to ignore what the __eq__() and __ne__() methods do.
+			  So, now what I see is that the __init__() intializes two fields:
+			  
+			  1. is_required: some boolean value
+              2. reg_type: but this is mysterious because the value passed to this
+			     parameter i.e "name" doesnt look like a regex expression to me.???
+			  
+			  god knows what they do. But then what happens next is:
+			  
+			  __call__() calls the validate_data() method which takes the above values
+			  and the user input which for now I think takes the value that is entered in
+			  the db by some user.
+			  
+			  Now after coming to validate_data() method some of the fields mentioned above 
+              become more clear.
+              The doc string for it is:
+                    **Arguments:**
+						- user_input: Data provided by user to validate
+						- reg_type: Regular expression to validate data
+						- is_required: boolean
+						- messgae: Error message
+
+					**Returns:** True or False
+
+					**Raises:** ValidationError.
+
+					Checks whether given data is valid or not.
+
+					Following steps can be performed on this method:
+						- Check whether custom regex is provided or not by looking up in
+							validate dictionary
+						- Use regex from dictionary if custom regex is not provided
+						- If custom message is not provided while calling this method,
+							it will assign default message from dictionary or generic message
+							for custom regex
+						- Validate user_input against appropriate regular expression.
+						- If user_input not valid raise ValidationError otherwise return True			  
+										  
+			  But still, now that I know what these fields are, there is still some ambiguity 
+			  in how they will be used.
+			  
+			  especially reg_type???
+			  
+			  Now the first thing that they check is whether is_required field is true
+					If it is then they call the validate_requiredfield() method and pass user_input
+					to it.
+					But validate_requiredfield() method does something cool,
+					    It checks whether the user_input is not none and the way they 
+						do it is  like
+						   if not user_input and not len(str(user_input if user_input is not None else ''))
+						        what is cool is the way they have checked for required fields.
+								I think from what i understand is that,
+                                    First it checks whether user_input is None like the actual None value,
+                                    then it checks if the user_input is there or not and if not pass an empty
+                                    string.
+								    Now length of empty string is 0 and not 0 is 1 
+									Now if both these conditions satisfy then it means no input is given
+									and hence raise ValidationError
+									
+									but otherwise it returns true.
+									
+					But now comes another question, the validate_data() method is called in the __call__()
+					method of the ValidateData class, but in the model we have only instantiated this class.
+					So since the role of __call__() is to make the instance callable like a function, where is this instance called?
+					Is it called when its instantiated or what?
+					
+					But now we come to the interesting part, 
+					    it checks if reg_type is in validate
+						    what???? so i checked as to where is this validate
+							    turns out validate is a dictionary
+								but its empty, so when was it assigned any values??
+								thats still a question,
+								ans:mystery solved!! its called in droana/apps/dashboard/apps.py
+								    So thats when this validate dictionary gets filled up with regexes.
+								but what i have basically passed is
+								the key value "name" for which the regex expression is stored.
+								Ok,Now first it checks whether reg_Type is in dictionary
+                                if its not in the dictionary then putit there
+                                otherwise obtain the regex for the passed key.
+                                Also since we can pass custom regexes, for custom regexes we need to pass
+                                custom error messages.
+								So then there are conditions to check whether they are provided or not.
+								They have also used re module of python and not of django, and they use the match()
+								method to match the string with the regex.
+								
+								Ok, Now this is over. Some Basic validation done. I can do this at home so lets just 
+								see.
+								
+									
+				name = models.CharField(_('Name'), max_length=88, db_column='name',
+                            blank=False, null=False, db_index=True,
+                            unique=True,
+                            validators=[ValidateData("name", True),
+                                        MaxLengthValidator(80)],
+                            help_text=_("Type name of an university.\
+                            Maximum 80 printable characters are allowed."))					
+				
+				
+				import re
+
+from django.utils.deconstruct import deconstructible
+from django.utils.translation import ugettext_lazy as _
+from django.forms import ValidationError
+
+from droana.apps.dashboard.apps import DB_LANGUAGES
+from droana.apps.user_management.common import LOGGER
+from droana.libs.utils import languages_unicode
+
+class NotValid(Exception):
+    """
+    This class is used to handel exception
+    """
+    def __init__(self, value):
+        self.value = value
+    def __str__(self):
+        return self.value
+
+@deconstructible
+class ValidateData(object):
+
+    """
+    Class level validator for model
+    """
+    def __init__(self, reg_type, is_required):
+        self.is_required = is_required
+        self.reg_type = reg_type
+
+    def __call__(self, user_input):
+        validate_data(user_input, self.reg_type, self.is_required)
+
+    def __eq__(self, other):
+        return (isinstance(other, ValidateData))
+
+    def __ne__(self, other):
+        return not (self == other)
+
+def get_alphabets(case_type=None):
+
+    """
+        **Type:** public.
+
+        **Arguments:**
+            -None
+
+        **Returns:** concatenated string contained alphabetics value's
+             unicode of languages defined in settings
+
+        **Raises:** Nothing.
+
+        **Note:** Unicode must be present in languages_unicode.py
+
+    """
+    alphabets = ''
+    if DB_LANGUAGES:
+        for language_code in DB_LANGUAGES.keys():
+            if languages_unicode.UNICODE_DICT.get(language_code):
+                if language_code == 'en' and case_type == "lower":
+                    alphabets = alphabets + languages_unicode.UNICODE_DICT.get(language_code).get('alphabets').get("lower")
+                elif language_code == 'en' and case_type == "upper":
+                    alphabets = alphabets + languages_unicode.UNICODE_DICT.get(language_code).get('alphabets').get("upper")
+                elif language_code == 'en':
+                    alphabets = alphabets + languages_unicode.UNICODE_DICT.get(language_code).get('alphabets').get("upper")
+                    alphabets = alphabets + languages_unicode.UNICODE_DICT.get(language_code).get('alphabets').get("lower")
+                else:
+                    alphabets = alphabets + languages_unicode.UNICODE_DICT.get(language_code).get('alphabets')
+        return alphabets
+    return alphabets
+        
+def get_numeric():
+    """
+        **Type:** public.
+
+        **Arguments:**
+            -None
+
+        **Returns:** concatenated string contained numeric value's unicode of languages defined in settings
+
+        **Raises:** Nothing.
+
+        **Note:** Unicode must be present in languages_unicode.py
+
+    """
+    numeric = ''
+    if DB_LANGUAGES:
+        for language_code in DB_LANGUAGES.keys():
+            if languages_unicode.UNICODE_DICT.get(language_code):
+                numeric = numeric + languages_unicode.UNICODE_DICT.get(language_code).get('numeric')
+        return numeric
+    return numeric
+
+validate = {}
+
+def assign_values():
+    alphabets_lower = get_alphabets(case_type="lower")
+    alphabets_upper = get_alphabets(case_type="upper")
+    alphabets = get_alphabets()
+    numeric = get_numeric()
+
+    validate.update({
+                "email":{"regex":r"^["+numeric+alphabets_lower+r"!#$%&/'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?",
+                         "message":_('Enter valid email address')
+                 },
+                "contact":{"regex":r"^["+numeric+r"\+\-\(\)\s]+$",
+                           "message":_('Enter valid contact number')
+                           },
+    
+                "name":{"regex":r"^["+alphabets+r"_"+numeric+r"!\"#$%&\'()*+,-./:;<=>?@^`{|}~\[\]\\\\]+(\s{1}["+alphabets+r"_"+numeric+r"!\"#$%&\'()*+,-./:;<=>?@^`{|}~\[\]\\\\]+)*$",
+                           "message":_('Only printable characters are allowed. Continued spaces are not allowed.')
+                           },
+                "code":{"regex":r"^["+alphabets+r"_"+numeric+r"!\"#$%&\'()*+,-./:;<=>?@^`{|}~\[\]\\\\]+$",
+                           "message":_('Only printable characters are allowed without space')
+                           },
+                "campus_code":{"regex":r"^["+alphabets_lower+r""+numeric+r"']*$",
+                           "message":_('Only lower case alphabets and numeric characters are allowed')
+                           },
+                "alphanumeric":{"regex":r"^["+alphabets+r""+numeric+r"]+$",
+                           "message":_('Only alphanumeric characters are allowed')
+                           },
+                "date":{"regex":r'^(0[1-9]|[12][0-9]|3[01])[- /.](0[1-9]|1[012])[- /.](19|20)\d\d$',
+                        "message":_('Incorrect date format. Please enter date in format "dd/mm/yyyy"')
+                           },
+                "number":{"regex":r"^["+numeric+r"]+$",
+                           "message":_('Only positive integer numbers are allowed')
+                           },
+                "decimal":{"regex":r"^["+numeric+r"]*(\.["+numeric+r"]+)?$",
+                           "message":_('Only decimal numbers are allowed')
+                           },
+                "time":{"regex":r'^([01]?[0-9]|2[0-3]):[0-5][0|5]$',
+                           "message":_('Enter valid time')
+                           },
+                "ip":{"regex":r"^["+alphabets+r"\.-"+numeric+r"]*$",
+                           "message":_('Only alphanumeric, - and dot are allowed')
+                           },
+                "username":{"regex":r"^["+alphabets_lower+numeric+r"-_/]*$",
+                           "message":_('Only lowercase alphabets, numeric, -, _ and slash(/) are allowed.')
+                           },
+                "username_without_slash":{"regex":r"^["+alphabets_lower+numeric+r"-_/]*$",
+                           "message":_('Only lowercase alphabets, numeric, - and _ are allowed.')
+                           },
+                })
+
+def validate_data(user_input, reg_type, is_required=True, message=None):
+
+    """
+    **Type:** Public.
+
+    **Arguments:**
+        - user_input: Data provided by user to validate
+        - reg_type: Regular expression to validate data
+        - is_required: boolean
+        - messgae: Error message
+
+    **Returns:** True or False
+
+    **Raises:** ValidationError.
+
+    Checks whether given data is valid or not.
+
+    Following steps can be performed on this method:
+        - Check whether custom regex is provided or not by looking up in
+            validate dictionary
+        - Use regex from dictionary if custom regex is not provided
+        - If custom message is not provided while calling this method,
+            it will assign default message from dictionary or generic message
+            for custom regex
+        - Validate user_input against appropriate regular expression.
+        - If user_input not valid raise ValidationError otherwise return True
+    """
+    if is_required:
+        validate_requiredfield(user_input)
+
+    if not reg_type in validate:
+        final_regex = reg_type
+        
+    else:
+        final_regex = validate[reg_type]['regex']
+
+    if not message and reg_type in validate:
+        message = validate[reg_type]['message']
+        
+    if not message and not reg_type in validate:
+        message = _('Invalid data(Custom message is not provided)')
+
+    if user_input:
+        if not re.match(final_regex,user_input):
+            raise ValidationError(message)
+        else:
+            return True
+    else:
+        return False
+
+def validate_requiredfield(user_input):
+    """
+    Check whether field is required or not
+    """
+    if not user_input and not len(str(user_input if user_input is not None else '')):
+        raise ValidationError(_('This field is required'))
+    else:
+        return True
+
+def validate_positive(user_input, limit=0,
+                      message=_('This field is required positive value'),is_required=True):
+    """
+    Regular expression to validate positive value
+    """
+    if is_required:
+        validate_requiredfield(user_input)
+    if user_input:
+        if user_input < limit:
+            raise ValidationError(_(message))
+        else:
+            return True
+    else:
+        return False
+//call asign in app.config file
