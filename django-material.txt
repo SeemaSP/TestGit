@@ -1,0 +1,3 @@
+1.http://www.blog.pythonlibrary.org/2014/01/21/python-201-what-is-super/
+2.http://blog.etianen.com/blog/2013/06/08/django-querysets
+3.https://simpleisbetterthancomplex.com/tips/2016/08/16/django-tip-11-custom-manager-with-chainable-querysets.html
